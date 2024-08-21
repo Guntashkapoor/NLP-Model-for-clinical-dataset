@@ -1,0 +1,231 @@
+import streamlit as st
+import os
+from fpdf import FPDF
+import base64
+import spacy
+import en_core_med7_lg
+from spacy import displacy
+from PIL import Image 
+from pytesseract import pytesseract 
+from PyPDF2 import PdfReader
+import numpy as np
+import fitz
+import time
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+
+
+# Initialize session state
+if 'file_uploaded' not in st.session_state:
+    st.session_state['file_uploaded'] = False
+if 'folder_path' not in st.session_state:
+    st.session_state['folder_path'] = ""
+if 'file_name' not in st.session_state:
+    st.session_state['file_name'] = ""
+if 'text_area_visible' not in st.session_state:
+    st.session_state['text_area_visible'] = False
+if 'submit_disabled' not in st.session_state:
+    st.session_state['submit_disabled'] = False
+
+# image_path = r"\images\DischargeSummary1.jpg"
+# pdf_path=r"C:\Users\HP\Documents\Guntash\RPL FLASH\NLP Model\static\PDF\HospitalDischargeSummary.pdf"
+
+
+def ExtractTextFromImage(path=None):
+    model="en_core_med7_lg"
+    nlp = spacy.load(model)
+    img=Image.open(path)    
+    img1 = np.array(img)
+    text=pytesseract.image_to_string(img1)
+    doc = nlp(text)
+    entities = []
+    for ent in doc.ents:
+        entities.append((ent.start_char, ent.end_char, ent.label_))
+    annotations.append((text, {'entities': entities}))    
+    return annotations
+
+def ExtractTextFromPdf(path=None):
+    doc = fitz.open(path)
+    pdf_text = ""
+    for page_num in range(doc.page_count):
+        page = doc[page_num]
+        pdf_text += page.get_text()
+        
+    return pdf_text
+
+def generate_medical_annotation(model,document):
+    nlp = spacy.load(model)        
+    annotations = []
+    for text in document:
+        doc = nlp(text)
+        entities = []
+        for ent in doc.ents:
+            entities.append((ent.start_char, ent.end_char, ent.label_))
+        annotations.append((text, {'entities': entities}))    
+   
+    return annotations
+
+def visualize_annotations(transcription):
+        nlp = spacy.load("en_core_med7_lg")
+        # Create distict colours for labels
+        col_dict = {}
+        s_colours = ['#e6194B', '#3cb44b', '#ffe119', '#ffd8b1', '#f58231', '#f032e6', '#42d4f4']
+        for label, colour in zip(nlp.pipe_labels['ner'], s_colours):
+            col_dict[label] = colour
+        options = {'ents': nlp.pipe_labels['ner'], 'colors':col_dict}
+        doc = nlp(transcription)
+        spacy.displacy.render(doc, style = 'ent', jupyter = True, options = options)
+        [(ent.text, ent.label_) for ent in doc.ents]
+    
+
+
+# Create applause folder if not exists
+def create_applause_folder():
+    applause_folder = os.path.join(os.getcwd(), 'applause')
+    if not os.path.exists(applause_folder):
+        os.makedirs(applause_folder)
+    return applause_folder
+
+# Function to handle file upload
+def handle_file_upload():
+    uploaded_file = st.session_state['uploaded_file']
+    allowed_types = ["pdf", "txt", "png", "jpeg", "jpg"]
+    file_extension = uploaded_file.name.split('.')[-1].lower()
+    if file_extension in allowed_types:
+        uploads_dir = "uploads"
+    
+        # Check if the uploads directory exists; if not, create it
+        if not os.path.exists(uploads_dir):
+            os.makedirs(uploads_dir)
+        
+        # Save the uploaded file to the uploads directory
+        file_path = os.path.join(uploads_dir, uploaded_file.name)
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+    if file_extension=='pdf':
+        annotations=ExtractTextFromPdf(file_path)
+        output_file=file_path+'_Solution.txt'
+        with open(output_file,'w')as f:
+            f.write(annotations)
+        with st.spinner('Processing...'):
+            time.sleep(20)
+        st.text_area("Prescription-1",value=annotations)
+        output_file=file_path+'_Solution.txt'
+        c = canvas.Canvas(output_file, pagesize=letter)
+        width, height = letter  # Get the dimensions of the page
+        data=open(output_file,'r')
+        data1=data.readlines()
+        # Add UTF-8 content to the PDF
+        text_object = c.beginText(40, height - 40)  # Starting position of text
+        text_object.setFont("Helvetica", 12)
+        # Add the text content, handling line breaks
+        for line in data1:
+            text_object.textLine(line)
+        c.drawText(text_object)
+        c.showPage()
+        c.save()
+        with st.spinner('Processing...'):
+            time.sleep(15)
+        # pdf_output_path=file_path+'_Solution.pdf'
+        with st.spinner('Processing...'):
+            time.sleep(13)
+        st.download_button(
+                        label="Download PDF",
+                        data=pdf_file,
+                        file_name=pdf_output_path,
+                        mime="application/pdf"
+                    )
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button('Diagnose More'):
+                st.session_state['file_uploaded'] = False
+                st.session_state['text_area_visible'] = False
+                st.session_state['submit_disabled'] = True
+                st.rerun()
+                
+                # file_upload()
+        with col2:
+            if st.button('Download as PDF'):
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("Arial", size=12)
+                output_file=file_path+'_Solution.txt'
+                write=open(output_file,'r')
+                read='.'.join(write.readlines())
+                pdf.cell(200, 10, txt=read,  ln=True, align='C')
+                # pdf_output_path = os.path.join(st.session_state['folder_path'], 'prescription.pdf')
+                pdf.output(pdf_output_path)
+                with open(pdf_file_path, "rb") as pdf_file:
+                    st.download_button(
+                        label="Download PDF",
+                        data=pdf_file,
+                        file_name="downloaded_file.pdf",
+                        mime="application/pdf"
+                    )
+                
+
+# Function to create a PDF and return its binary content
+def create_pdf():
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt="Hello, this is a test PDF file.", ln=True, align='C')
+    pdf_output_path = os.path.join(st.session_state['folder_path'], 'prescription.pdf')
+    pdf.output(pdf_output_path)
+    
+    # Read the PDF file as binary
+    with open(pdf_output_path, 'rb') as f:
+        pdf_data = f.read()
+    
+    return pdf_data
+
+# Function to generate download link
+def generate_download_link(pdf_data):
+    b64 = base64.b64encode(pdf_data).decode() # B64 encode
+    href = f'<a href="data:application/octet-stream;base64,{b64}" download="prescription.pdf">Download PDF</a>'
+    return href
+
+def file_upload():
+    # File uploader with on_change callback
+    st.file_uploader("Upload a file", type=["pdf", "png", "jpeg", "jpg", "txt"], key='uploaded_file', on_change=handle_file_upload)
+
+file_upload()
+
+# Submit button
+if st.button('Submit', disabled=st.session_state['submit_disabled']):
+    st.session_state['file_uploaded'] = True
+    st.session_state['text_area_visible'] = True
+
+# Text area and buttons (hidden initially)
+if st.session_state['text_area_visible']:
+    file_path = os.path.join(st.session_state['folder_path'], st.session_state['file_name'])
+
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button('Diagnose More'):
+            st.session_state['file_uploaded'] = False
+            st.session_state['text_area_visible'] = False
+            st.session_state['submit_disabled'] = True
+            st.rerun()
+            
+            # file_upload()
+    with col2:
+        if st.button('Download as PDF'):
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Arial", size=12)
+            output_file=st.session_state['folder_path']+st.session_state['file_name']+'_Solution.txt'
+            write=open(output_file,'r')
+            read='.'.join(write.readlines())
+            pdf.cell(200, 10, txt=read, ln=True, align='C')
+            pdf_output_path = os.path.join(st.session_state['folder_path'], 'prescription.pdf') 
+            pdf.output(pdf_output_path)
+            
+            
+
+# # Defining paths to tesseract.exe 
+# output1=ExtractTextFromPdf(pdf_path)
+# annotations = generate_medical_annotation("en_core_med7_lg",output1)
+# print(annotations)
+# visualize_annotations(output1)
